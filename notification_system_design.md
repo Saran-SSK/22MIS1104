@@ -487,3 +487,64 @@ The system should separate incoming requests from delivery work. API servers acc
 - More workers reduce latency but increase operational cost.
 - Horizontal scaling is effective for stateless APIs, but database writes still need careful coordination.
 
+# Stage 5 — frontend architecture
+
+## Frontend stack
+
+The frontend is built with React and TypeScript, with Axios for HTTP integration and Material UI for consistent component styling.
+
+## Component structure
+
+- `NotificationList`: renders the main feed, handles pagination or virtualization, and coordinates filter state.
+- `NotificationCard`: displays title, body, timestamp, read state, and priority badge.
+- `FilterPanel`: exposes type filters, unread toggle, and priority shortcuts.
+- `PriorityNotifications`: shows urgent alerts in a separate section with direct access.
+
+## State management
+
+- Use React Context API for app-wide state such as current user, notification filters, and unread counts.
+- Keep local component state for UI-only concerns like open menu state and scroll position.
+- Use a context provider to expose actions like `fetchNotifications`, `markRead`, and `refreshPriority`.
+
+## API integration strategy
+
+- Use Axios instances with base URL, auth headers, and interceptors.
+- Keep API calls in a reusable service layer: `notificationApi.fetchNotifications()`, `notificationApi.markAsRead()`, `notificationApi.fetchPriority()`.
+- Use typed request and response interfaces so the component layer only consumes typed data.
+
+## Real-time updates
+
+- Primary: WebSockets to receive new notifications and update the list in real time.
+- Fallback: polling every 15 seconds for students who cannot maintain a WS connection.
+- On socket message, update the notification context and refresh cached counts.
+
+## Optimistic UI updates
+
+- When marking read, update the card state locally immediately and send the API request in the background.
+- Roll back the UI change only if the request fails.
+- Keep the toast or inline error visible so the student knows if the update did not persist.
+
+## Large list handling
+
+- Use pagination or virtualization with a library like `react-window` when the list grows.
+- Load initial pages first and fetch additional notifications on scroll or page change.
+- Avoid rendering all notifications at once to keep frame rates stable.
+
+## Performance optimization
+
+- Memoize notification cards and filter values to prevent unnecessary re-renders.
+- Use `useCallback` and `useMemo` for handler functions and derived lists.
+- Cache recent notifications in local state and refresh only when the backend signals new data.
+- Defer heavy rendering for off-screen list items via virtualization.
+
+## Reusable hooks and folder structure
+
+- `hooks/useNotifications.ts`: encapsulates fetch, filter, real-time subscription, and optimistic update logic.
+- `hooks/useUnreadCount.ts`: exposes unread totals and refresh functions.
+- `components/NotificationList`, `components/NotificationCard`, `components/FilterPanel`, `components/PriorityNotifications`.
+- `services/notificationApi.ts` and `contexts/NotificationContext.tsx` for clean separation.
+
+## Practical note
+
+The frontend should stay simple while supporting real-time and offline-friendly behavior. React + TypeScript gives strong typing, Axios keeps API integration consistent, and Material UI accelerates a maintainable UI surface.
+
