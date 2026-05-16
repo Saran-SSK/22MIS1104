@@ -408,3 +408,82 @@ For a stronger production pattern, add an index on `(type, createdAt DESC)` and 
 - Avoid `SELECT *` on large tables; return only the columns the client needs.
 - Balance index coverage with insert cost, especially in a write-heavy notification workload.
 
+# Stage 4 — delivery scaling and reliability
+
+## Scaling delivery efficiently
+
+The system should separate incoming requests from delivery work. API servers accept notification events, validate payloads, and enqueue work for downstream workers instead of delivering notifications synchronously.
+
+## Asynchronous processing and worker architecture
+
+- Clients post notification events to the API.
+- The API publishes messages to RabbitMQ exchanges.
+- Worker processes consume queues and execute notification delivery, database updates, and cache invalidation.
+- Workers are horizontally scalable and can be added during peak periods.
+
+## Background jobs and message queues
+
+- Use RabbitMQ for durable queueing, retry tracking, and backpressure.
+- A notification producer writes to a queue such as `notifications.incoming`.
+- A separate consumer group handles delivery to student channels and another updates unread counts.
+- Queues decouple spikes from backend processing and make retries manageable.
+
+## Why queues improve scalability and reliability
+
+- Requests return quickly because message delivery is deferred.
+- RabbitMQ smooths bursts by buffering work and letting workers pull at a controlled rate.
+- Failed jobs can be moved to dead-letter queues for inspection and replay.
+- Queues prevent the API from blocking on external services and keep the system resilient.
+
+## Redis caching strategy
+
+### Unread counts
+
+- Keep per-user unread totals in Redis hashes or sorted data structures.
+- Update counts atomically on `read` transitions and new notification inserts.
+- Read counts directly from Redis instead of querying Postgres on every feed request.
+
+### Recent notifications
+
+- Cache the latest 10-20 notifications per user in Redis lists.
+- Invalidate or refresh the cache when new notifications arrive or read state changes.
+- This reduces pressure on the main notifications table for hot users.
+
+### Priority notifications
+
+- Cache priority notification IDs or small objects separately.
+- Use a Redis sorted set keyed by user to support quick retrieval of priority alerts.
+- Keep the cache small and refresh it on priority state changes only.
+
+## Horizontal scaling and load balancing
+
+- Run many API instances behind Nginx.
+- Use Nginx as the edge load balancer with health checks and sticky session control disabled.
+- Backend app servers should be stateless, with Redis and RabbitMQ as shared state.
+
+## Handling placement season spikes
+
+- Increase worker count and queue consumers ahead of known peak windows.
+- Throttle non-critical jobs and prioritize delivery queue processing for unread counts and priority messages.
+- Use burst-sized connection pools and temporary autoscaling on API and worker fleets.
+- Cache as much read data as possible to keep the database load low during heavy traffic.
+
+## Retry mechanisms
+
+- Use RabbitMQ dead-letter exchanges for failed deliveries.
+- Implement exponential backoff and a capped retry count per message.
+- For permanent failures, persist a failure record and surface it to operations.
+
+## API rate limiting
+
+- Enforce per-user and per-IP rate limits at the Nginx or API gateway layer.
+- Rate limit notification creation and fetch endpoints separately.
+- Keep limits high enough for normal student activity but low enough to prevent abuse.
+
+## Tradeoffs
+
+- Queues add complexity but enable resilience under burst load.
+- Redis caching improves read performance but requires careful invalidation.
+- More workers reduce latency but increase operational cost.
+- Horizontal scaling is effective for stateless APIs, but database writes still need careful coordination.
+
