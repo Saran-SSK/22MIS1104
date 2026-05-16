@@ -76,8 +76,27 @@ function getTopPriorityNotifications(studentId) {
   return sortedNotifications.slice(0, 15)
 }
 
+function getAllNotifications(studentId) {
+  return notifications.filter((notification) => notification.studentId === studentId)
+}
+
+function markNotificationAsRead(notificationId, studentId) {
+  const notification = notifications.find(
+    (item) => item.id === notificationId && item.studentId === studentId
+  )
+
+  if (!notification) {
+    return null
+  }
+
+  notification.isRead = true
+  return notification
+}
+
 module.exports = {
   getTopPriorityNotifications,
+  getAllNotifications,
+  markNotificationAsRead,
   calculatePriorityScore,
   getTypeWeight,
   getUrgencyWeight,
