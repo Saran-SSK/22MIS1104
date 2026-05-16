@@ -548,3 +548,72 @@ The frontend is built with React and TypeScript, with Axios for HTTP integration
 
 The frontend should stay simple while supporting real-time and offline-friendly behavior. React + TypeScript gives strong typing, Axios keeps API integration consistent, and Material UI accelerates a maintainable UI surface.
 
+# Stage 6 — priority ranking and efficient retrieval
+
+## Priority ranking strategy
+
+Priority should be driven by a composite score rather than absolute recency. For a campus notification platform, the highest-priority items are those that are urgent, unread, and relevant to the student’s current context.
+
+## Priority scoring formula
+
+A realistic scoring formula can combine type, urgency, recency, and unread state:
+
+```text
+priority_score =
+  base_type_score +
+  urgency_weight * urgency_level +
+  recency_factor -
+  read_penalty
+```
+
+Where:
+- `base_type_score`: placements=40, events=20, results=30
+- `urgency_level`: 0-3 for low/medium/high/critical
+- `recency_factor`: `1000 / (1 + age_hours)`
+- `read_penalty`: 50 if already read, otherwise 0
+
+This formula ensures unread critical placement updates float to the top while still respecting freshness.
+
+## Why sorting the full dataset is inefficient
+
+Reading and sorting millions of rows for every request is expensive. A full table or index scan followed by global sort costs too much CPU, disk I/O, and memory, especially when only the top 15 items are needed.
+
+## Min heap / priority queue recommendation
+
+Use a stream-based priority queue to compute the top results without sorting the entire dataset.
+
+- Scan only candidate rows that match the student and active notification filters.
+- Maintain a min heap of size 15 keyed by `priority_score`.
+- Replace the heap root when a higher-scoring item is found.
+
+This avoids full sorting and keeps the working set minimal.
+
+## Time complexity
+
+- Naive sorting approach: O(N log N) for N candidate notifications, plus O(N) scan cost.
+- Optimized heap approach: O(N log K) where K is 15, so each candidate is cheap and the heap remains bounded.
+
+## Scalability benefits
+
+- The heap approach is more predictable under load because its worst-case memory use is fixed.
+- Query work stays proportional to candidate set size, not the total notification table.
+- When combined with selective filtering and indexing, it can support millions of rows with low latency.
+
+## Redis caching opportunities
+
+- Cache the top 15 priority notification IDs or serialized items per user.
+- Invalidate the cache on new high-priority inserts or when notifications are marked read.
+- Use Redis sorted sets keyed by student ID with score values derived from `priority_score` for fast top-k retrieval.
+
+## Backend API exposure
+
+- Expose `GET /api/v1/notifications/priority`.
+- Support query parameters like `limit=15` and optional `type` filters.
+- The API should read from cache first, then fall back to heap-based computation if the cache is stale.
+
+## Frontend usage
+
+- The frontend uses the priority endpoint to populate a `PriorityNotifications` panel.
+- It refreshes the panel on socket events and when the user opens the app.
+- This keeps urgent alerts visible without querying the full notification feed.
+
