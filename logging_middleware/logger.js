@@ -2,7 +2,9 @@ const axios = require('axios')
 const path = require('path')
 const dotenv = require('dotenv')
 
-require('dotenv').config()
+require("dotenv").config({
+   path: require("path").resolve(__dirname, "../.env")
+});
 dotenv.config({ path: path.resolve(__dirname, '..', '.env') })
 
 const {
@@ -20,22 +22,43 @@ const ALL_PACKAGES = new Set([
 ])
 
 async function Log(stack, level, packageName, message) {
-  if (typeof stack !== 'string') throw new TypeError('stack must be a string')
-  if (!STACKS.includes(stack)) throw new Error(`Invalid stack "${stack}". Allowed: ${STACKS.join(', ')}`)
-
-  if (typeof level !== 'string') throw new TypeError('level must be a string')
-  if (!LEVELS.includes(level)) throw new Error(`Invalid level "${level}". Allowed: ${LEVELS.join(', ')}`)
-
-  if (typeof packageName !== 'string') throw new TypeError('packageName must be a string')
-  if (!ALL_PACKAGES.has(packageName)) {
-    const allowed = [...ALL_PACKAGES].join(', ')
-    throw new Error(`Invalid package "${packageName}". Allowed: ${allowed}`)
+  if (typeof stack !== 'string') {
+    console.error('Invalid stack type for logger')
+    return null
+  }
+  if (!STACKS.includes(stack)) {
+    console.error(`Invalid stack for logger: ${stack}`)
+    return null
   }
 
-  if (typeof message !== 'string') throw new TypeError('message must be a string')
+  if (typeof level !== 'string') {
+    console.error('Invalid level type for logger')
+    return null
+  }
+  if (!LEVELS.includes(level)) {
+    console.error(`Invalid level for logger: ${level}`)
+    return null
+  }
+
+  if (typeof packageName !== 'string') {
+    console.error('Invalid packageName type for logger')
+    return null
+  }
+  if (!ALL_PACKAGES.has(packageName)) {
+    console.error(`Invalid package for logger: ${packageName}`)
+    return null
+  }
+
+  if (typeof message !== 'string') {
+    console.error('Invalid message type for logger')
+    return null
+  }
 
   const token = process.env.ACCESS_TOKEN
-  if (!token) throw new Error('ACCESS_TOKEN not set in root .env')
+  if (!token) {
+    console.error('ACCESS_TOKEN not set in root .env')
+    return null
+  }
 
   try {
     const response = await axios.post(
@@ -47,14 +70,14 @@ async function Log(stack, level, packageName, message) {
   } catch (err) {
     if (err.response) {
       console.error('Logging API responded with error:', err.response.status, err.response.data)
-      throw new Error(`Logging API error: ${err.response.status}`)
+      return null
     }
     if (err.request) {
       console.error('No response from Logging API:', err.message)
-      throw new Error('No response from Logging API')
+      return null
     }
     console.error('Failed to send log:', err.message)
-    throw err
+    return null
   }
 }
 
