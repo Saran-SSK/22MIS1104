@@ -309,3 +309,102 @@ LIMIT $2;
 - Use a dedicated notification worker to move old rows into archive partitions or a separate table.
 - For high concurrency, use connection pooling and keep update statements simple so read-status writes do not block feed reads.
 
+# Stage 3 — query optimization and indexing
+
+## Query review
+
+The query is logically correct for fetching unread notifications for a single student, but it is not production-efficient at scale.
+
+```sql
+SELECT * FROM notifications
+WHERE studentID = 1042 AND isRead = false
+ORDER BY createdAt ASC;
+```
+
+It returns the right rows, but the implementation has several problems once the table reaches millions of rows.
+
+## Why it becomes slow
+
+- `SELECT *` reads all columns, increasing I/O and preventing the database from using covering indexes.
+- Without an index on `(studentID, isRead, createdAt)`, Postgres must scan the table or a broad index and then sort the rows.
+- `ORDER BY createdAt ASC` adds sorting work on the result set, which can spill to disk for large row counts.
+- A missing composite index means the planner cannot efficiently filter by student and unread status together.
+
+## Specific issues
+
+- Full table scans: if the optimizer chooses a table scan, it will read all 5M rows instead of only the student’s partition.
+- Sorting overhead: ordering after filtering on a large candidate set is expensive and may require a temp file.
+- `SELECT *` inefficiency: it causes more data to be loaded than needed and can disable index-only scans.
+- Missing indexes: the query needs both filter and ordering support to avoid repeated row lookups.
+
+## Optimized indexing strategy
+
+- create a composite index on the access pattern used by the query
+- add partial indexes for the unread case
+- keep indexes narrow and avoid indexing every column
+
+## Recommended composite indexes
+
+```sql
+CREATE INDEX idx_notifications_student_unread_created
+  ON notifications (studentID, isRead, createdAt ASC);
+
+CREATE INDEX idx_notifications_student_type_created
+  ON notifications (studentID, type, createdAt DESC);
+
+CREATE INDEX idx_notifications_student_priority_created
+  ON notifications (studentID, priority, createdAt DESC)
+  WHERE priority = true;
+```
+
+These indexes support the common filters and ordering without indexing unnecessary data.
+
+## Why indexing every column is bad
+
+- Every index adds write cost on inserts and updates.
+- More indexes mean more storage and more work for vacuuming.
+- Wide indexes slow down insert throughput, which is critical for a notification stream.
+- Build only indexes that match actual query patterns.
+
+## Impact on inserts and storage
+
+- Each new index increases insert latency because Postgres must maintain additional tree structures.
+- Indexes consume disk space; a narrow composite index is cheaper than many single-column indexes.
+- Partial indexes reduce storage by indexing only active rows such as `isRead = false`.
+
+## Optimized query
+
+```sql
+SELECT id, type, title, body, createdAt
+FROM notifications
+WHERE studentID = 1042
+  AND isRead = false
+ORDER BY createdAt ASC;
+```
+
+If the composite index exists, Postgres can use an index scan and avoid a separate sort.
+
+## Complexity analysis
+
+- Original query without index: O(N + M log M), where N is table size and M is matching rows.
+- With the right composite index: O(log N + M), where the scan is index-driven and `ORDER BY` is covered by the index.
+
+## Recent placements query
+
+```sql
+SELECT studentID
+FROM notifications
+WHERE type = 'placements'
+  AND createdAt >= now() - interval '7 days'
+GROUP BY studentID;
+```
+
+For a stronger production pattern, add an index on `(type, createdAt DESC)` and push filters into the index scan.
+
+## Practical takeaway
+
+- Keep the hot query path narrow: filter by student, unread, and time or priority.
+- Use composite indexes that match both `WHERE` and `ORDER BY` clauses.
+- Avoid `SELECT *` on large tables; return only the columns the client needs.
+- Balance index coverage with insert cost, especially in a write-heavy notification workload.
+
